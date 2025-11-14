@@ -1,12 +1,12 @@
-// server.js (Código de Produção com Split de R$ 2,00)
+// server.js (Fluxo de Produção Completo)
 
 require('dotenv').config();
 const express = require('express');
 const { MercadoPagoConfig, OAuth, Preference } = require('mercadopago');
 const cors = require('cors');
 
-// Importa a função que busca o token real no seu DB (ou no módulo que criamos acima)
-const { getSellerTokenByProductId } = require('./database'); 
+// Importa as funções de DB
+const { getSellerTokenByProductId, saveSellerToken } = require('./database'); 
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -15,7 +15,7 @@ app.use(express.json());
 app.use(cors());
 app.use(express.static('public'));
 
-// 1. Configurar o Cliente Mercado Pago (usando chaves de PRODUÇÃO do Marketplace)
+// Configuração do Cliente Mercado Pago (usando chaves de PRODUÇÃO do Marketplace)
 const marketplaceClient = new MercadoPagoConfig({
   accessToken: process.env.MP_MARKETPLACE_SECRET_KEY,
   options: {
@@ -28,14 +28,17 @@ const redirectUri = `${process.env.BACKEND_URL}/mp-callback`;
 
 // -----------------------------------------------------------------
 // ROTA 1: Iniciar Conexão (OAuth)
-// (Usa credenciais do Marketplace)
 // -----------------------------------------------------------------
 app.get('/conectar-vendedor', async (req, res) => {
   try {
+    // ⚠️ Adicione o ID interno do vendedor ao 'state' para salvá-lo depois
+    const internalSellerId = req.query.seller_id || 'vendedor_teste_001'; 
+    
     const authUrl = await oauth.getAuthorizationUrl({
       options: {
         redirectUri: redirectUri,
         platformId: 'mp',
+        state: internalSellerId, // Passa o ID do vendedor pelo fluxo
       }
     });
     res.redirect(authUrl);
@@ -47,59 +50,52 @@ app.get('/conectar-vendedor', async (req, res) => {
 
 // -----------------------------------------------------------------
 // ROTA 2: Callback e Troca de Token (OAuth)
-// (Usa credenciais do Marketplace para obter token do Vendedor)
 // -----------------------------------------------------------------
 app.get('/mp-callback', async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state: sellerId } = req.query; // 'state' é o sellerId
     if (!code) {
-      return res.redirect('/pagina-de-erro-conexao.html');
+      return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
     }
 
     const credentials = await oauth.createCredentials({
-      body: {
-        code: code,
-        redirectUri: redirectUri
-      }
+      body: { code: code, redirectUri: redirectUri }
     });
 
-    // 🚨 AQUI VOCÊ DEVE SALVAR credentials.accessToken e credentials.refreshToken 
-    //    no seu BANCO DE DADOS REAL, associado ao vendedor.
+    // 🚀 NOVO: SALVANDO OS TOKENS NO MYSQL REAL!
+    if (sellerId) {
+         await saveSellerToken(sellerId, credentials.accessToken, credentials.refreshToken);
+    }
     
-    console.log('✅ CREDENCIAIS DE PRODUÇÃO DO VENDEDOR OBTIDAS COM SUCESSO.');
-    // Redireciona o vendedor de volta para o painel dele
+    console.log(`✅ CREDENCIAIS SALVAS NO DB para vendedor: ${sellerId}`);
     res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=sucesso`);
 
   } catch (error) {
-    console.error('Erro ao obter credenciais:', error);
-    res.status(500).send('Erro ao processar autorização do Mercado Pago.');
+    console.error('Erro ao obter/salvar credenciais:', error);
+    res.status(500).send('Erro ao processar autorização.');
   }
 });
 
 // -----------------------------------------------------------------
 // ROTA 3: Criar Pagamento com Split (PRODUÇÃO)
-// (Usa credenciais do Vendedor)
 // -----------------------------------------------------------------
 app.post('/create_preference', async (req, res) => {
   try {
-    // Produto com preço de R$ 2,00 para dividir em R$ 1,00 + R$ 1,00
-    const itemPrice = 2.00; 
+    const itemPrice = 2.00; // Preço do item
     
-    // 1. Receber o ID do produto do frontend e buscar o token real do vendedor
+    // 1. Recebe o produto e busca o token automaticamente no MySQL
     const { productId } = req.body; 
     const sellerToken = await getSellerTokenByProductId(productId || 'produto-split-real'); 
     
     if (!sellerToken) {
-      return res.status(404).send({ error: 'Token do vendedor não encontrado. Conexão OAuth falhou.' });
+      return res.status(404).send({ error: 'Vendedor ou Token de Produção não encontrado no DB. Verifique o produto ID.' });
     }
 
-    // 2. Lógica do Split: R$ 1,00 para o Marketplace
+    // 2. Lógica do Split: R$ 1,00 para o Marketplace (50%)
     const TAXA_FIXA_MARKETPLACE = 1.00;
-    
-    // Calcula o percentual: (1.00 / 2.00) * 100 = 50%
-    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100;
+    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100; // Resulta em 50
 
-    // 3. Configurar o cliente com o TOKEN DE PRODUÇÃO DO VENDEDOR
+    // 3. Configura o cliente com o TOKEN DE PRODUÇÃO DO VENDEDOR
     const sellerClient = new MercadoPagoConfig({ accessToken: sellerToken });
     const preference = new Preference(sellerClient);
 
@@ -108,30 +104,35 @@ app.post('/create_preference', async (req, res) => {
         {
           id: productId || 'produto-split-real',
           title: 'Produto de Teste Split (R$ 2,00)',
-          description: 'R$ 1,00 para o vendedor, R$ 1,00 para o Marketplace',
+          description: `Split: R$ ${TAXA_FIXA_MARKETPLACE.toFixed(2)} para o Marketplace`,
           unit_price: itemPrice,
           quantity: 1,
         }
       ],
-      // Split de 50%
+      // Parâmetro essencial para o Split: 50%
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
       back_urls: {
         success: `${process.env.BACKEND_URL}/success`,
         failure: `${process.env.BACKEND_URL}/failure`,
       },
-      notification_url: `${process.env.BACKEND_URL}/webhook-mp`,
+      // ⚠️ Use sua URL de Webhook real aqui
+      notification_url: `${process.env.BACKEND_URL}/webhook-mp`, 
     };
 
     const response = await preference.create({ body });
     res.json({ init_point: response.init_point });
 
   } catch (error) {
-    console.error('ERRO CRÍTICO NA CRIAÇÃO DA PREFERÊNCIA:', error);
-    res.status(500).send('Erro interno: Verifique se suas chaves de PRODUÇÃO estão corretas.');
+    console.error('ERRO CRÍTICO NA CRIAÇÃO DA PREFERÊNCIA:', error.message);
+    res.status(500).send('Erro interno. Verifique o console do servidor.');
   }
 });
 
+// Rotas de Simulação para fins de teste
+app.get('/success', (req, res) => res.send('Pagamento Aprovado (Simulação de Retorno)'));
+app.get('/failure', (req, res) => res.send('Pagamento Falhou (Simulação de Retorno)'));
+app.get('/painel-vendedor', (req, res) => res.send(`Conexão OAuth: ${req.query.status}`));
 
 app.listen(port, () => {
   console.log(`🚀 Servidor rodando em http://localhost:${port}`);
