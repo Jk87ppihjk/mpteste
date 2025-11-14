@@ -10,7 +10,7 @@ const https = require('https');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+// --- CONFIGURAÇÃO DO BANCO DE DADOS (Mantida) ---
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -21,7 +21,7 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// --- FUNÇÕES DE INTERAÇÃO COM O BANCO DE DADOS ---
+// --- FUNÇÕES DE INTERAÇÃO COM O BANCO DE DADOS (Mantidas) ---
 
 /** Busca o Access Token do vendedor no MySQL. */
 async function getSellerTokenByProductId(productId) {
@@ -40,8 +40,6 @@ async function getSellerTokenByProductId(productId) {
         }
         
         const sellerToken = rows[0].mp_access_token;
-        
-        // 🛑 ACEITA QUALQUER TOKEN (APP_USR- ou PROD-) PARA AMBIENTE DE TESTE
         if (!sellerToken) {
             console.error(`[DB] Token encontrado é nulo.`);
             return null;
@@ -86,7 +84,7 @@ const marketplaceClient = new MercadoPagoConfig({
 const redirectUri = `${process.env.BACKEND_URL}/mp-callback`;
 
 // -----------------------------------------------------------------
-// ROTAS DO MARKETPLACE
+// ROTAS DO MARKETPLACE E OAUTH (Mantidas)
 // -----------------------------------------------------------------
 
 // ROTA 1: Iniciar Conexão (OAuth)
@@ -217,9 +215,15 @@ app.post('/create_preference', async (req, res) => {
       // Parâmetro essencial para o Split
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
-      // 🛑 CONFIGURAÇÃO PARA FORÇAR PAGAMENTO À VISTA (PIX)
+      // 🛑 NOVO: CONFIGURAÇÃO PARA FORÇAR PIX/CARTÃO DE CRÉDITO
       payment_methods: {
-          installments: 1, // Força 1 parcela, priorizando Pix/Débito
+          installments: 1, // Limita cartão a 1 parcela
+          excluded_payment_types: [
+              { id: "ticket" },       // Exclui Boleto
+              { id: "atm" },          // Exclui Transferência/Caixa
+              { id: "debit_card" },   // Exclui Cartão de Débito (deixa Crédito)
+              { id: "bank_transfer" } // Exclui TED/DOC (foco no Pix)
+          ],
       },
       
       back_urls: {
