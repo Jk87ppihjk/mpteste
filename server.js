@@ -12,7 +12,7 @@ const port = process.env.PORT || 3000;
 
 // --- CONFIGURAÇÃO DE MIDDLEWARES ---
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Necessário para Webhooks
+app.use(express.urlencoded({ extended: true })); 
 app.use(cors());
 app.use(express.static('public'));
 
@@ -70,38 +70,51 @@ const paymentClient = new Payment(marketplaceClient);
 const redirectUri = `${process.env.BACKEND_URL}/mp-callback`;
 
 // -----------------------------------------------------------------
-// ROTAS DE OAUTH (Mantidas)
+// ROTAS DE OAUTH
 // -----------------------------------------------------------------
 
+// ROTA 1: Iniciar Conexão (OAuth)
 app.get('/conectar-vendedor', async (req, res) => {
   try {
     const internalSellerId = req.query.seller_id || 'vendedor_teste_001'; 
+    
+    // Construção manual da URL de Autorização 
     const authUrl = 'https://auth.mercadopago.com/authorization?' +
         `client_id=${process.env.MP_MARKETPLACE_APP_ID}` +
         `&response_type=code` +
         `&platform_id=mp` +
         `&state=${internalSellerId}` +
         `&redirect_uri=${redirectUri}`;
+    
     res.redirect(authUrl); 
+    
   } catch (error) {
     console.error('Erro ao gerar URL de autorização:', error); 
     res.status(500).send('Erro ao conectar com Mercado Pago.');
   }
 });
 
+// ROTA 2: Callback e Troca de Token (OAuth)
 app.get('/mp-callback', async (req, res) => {
   try {
     const { code, state: sellerId } = req.query; 
-    if (!code) return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
 
+    if (!code) {
+      return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
+    }
+
+    // CHAMADA HTTP DIRETA PARA O MERCADO PAGO para trocar o código pelo token
     const tokenResponse = await new Promise((resolve, reject) => {
         const data = JSON.stringify({
             client_id: process.env.MP_MARKETPLACE_APP_ID, client_secret: process.env.MP_MARKETPLACE_SECRET_KEY,
             code: code, redirect_uri: redirectUri, grant_type: 'authorization_code'
         });
-        const reqOptions = { hostname: 'api.mercadopago.com', path: '/oauth/token', method: 'POST',
+
+        const reqOptions = {
+            hostname: 'api.mercadopago.com', path: '/oauth/token', method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
         };
+
         const clientReq = https.request(reqOptions, (clientRes) => {
             let responseData = ''; clientRes.on('data', (chunk) => { responseData += chunk; });
             clientRes.on('end', () => {
@@ -112,6 +125,7 @@ app.get('/mp-callback', async (req, res) => {
                 } catch (e) { reject(new Error('Erro ao analisar resposta JSON do MP.')); }
             });
         });
+
         clientReq.on('error', (e) => { reject(e); });
         clientReq.write(data); clientReq.end();
     });
@@ -130,7 +144,7 @@ app.get('/mp-callback', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// ROTA 3: Criar Pagamento com Split (PIX ÚNICO)
+// ROTA 3: Criar Pagamento com Split (PIX E CARTÃO)
 // -----------------------------------------------------------------
 app.post('/create_preference', async (req, res) => {
   try {
@@ -146,7 +160,7 @@ app.post('/create_preference', async (req, res) => {
 
     // 2. Lógica do Split: R$ 0,01 para o Marketplace (0.5%)
     const TAXA_FIXA_MARKETPLACE = 0.01; 
-    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100;
+    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100; // 0.5%
 
     // 3. Configura o cliente com o TOKEN DO VENDEDOR
     const sellerClient = new MercadoPagoConfig({ accessToken: sellerToken });
@@ -167,14 +181,14 @@ app.post('/create_preference', async (req, res) => {
       },
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
-      // 🛑 NOVO: EXCLUSÃO AGRESSIVA PARA FORÇAR PIX (ÚNICO MÉTODO)
+      // 🛑 CORREÇÃO: Removemos a exclusão do CREDIT_CARD para que ele apareça.
       payment_methods: {
-          installments: 1, 
+          installments: 1, // Limita cartão a 1 parcela
           excluded_payment_types: [
-              { id: "credit_card" },  // Exclui Cartão de Crédito
               { id: "debit_card" },   // Exclui Cartão de Débito
               { id: "ticket" },       // Exclui Boleto
               { id: "atm" }           // Exclui Transferência (Geral)
+              // Cartão de Crédito (credit_card) NÃO está excluído aqui.
           ],
       },
       
