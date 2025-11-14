@@ -27,23 +27,27 @@ const oauth = new OAuth(marketplaceClient);
 const redirectUri = `${process.env.BACKEND_URL}/mp-callback`;
 
 // -----------------------------------------------------------------
+// server.js (trecho da ROTA 1: /conectar-vendedor)
+
 // ROTA 1: Iniciar Conexão (OAuth)
-// -----------------------------------------------------------------
 app.get('/conectar-vendedor', async (req, res) => {
   try {
-    // ⚠️ Adicione o ID interno do vendedor ao 'state' para salvá-lo depois
     const internalSellerId = req.query.seller_id || 'vendedor_teste_001'; 
     
-    const authUrl = await oauth.getAuthorizationUrl({
-      options: {
-        redirectUri: redirectUri,
-        platformId: 'mp',
-        state: internalSellerId, // Passa o ID do vendedor pelo fluxo
-      }
-    });
-    res.redirect(authUrl);
+    // 🛑 SOLUÇÃO AQUI: Construção manual da URL de Autorização 
+    const authUrl = 'https://auth.mercadopago.com/authorization?' +
+        `client_id=${process.env.MP_MARKETPLACE_APP_ID}` +
+        `&response_type=code` +
+        `&platform_id=mp` +
+        `&state=${internalSellerId}` +
+        `&redirect_uri=${redirectUri}`;
+    
+    console.log('Redirecionando vendedor para URL de Autorização...');
+    res.redirect(authUrl); // Redireciona para o MP
+    
   } catch (error) {
-    console.error('Erro ao gerar URL de autorização:', error);
+    // Agora este catch só pega erros de redirecionamento, não erros do SDK
+    console.error('Erro ao gerar URL de autorização:', error); 
     res.status(500).send('Erro ao conectar com Mercado Pago.');
   }
 });
