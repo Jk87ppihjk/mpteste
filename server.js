@@ -41,8 +41,7 @@ async function getSellerTokenByProductId(productId) {
         
         const sellerToken = rows[0].mp_access_token;
         
-        // 🛑 CORREÇÃO APLICADA AQUI: Remove a verificação do prefixo 'PROD-'
-        // O token é retornado, mesmo que comece com APP_USR-.
+        // 🛑 ACEITA QUALQUER TOKEN (APP_USR- ou PROD-) PARA AMBIENTE DE TESTE
         if (!sellerToken) {
             console.error(`[DB] Token encontrado é nulo.`);
             return null;
@@ -166,7 +165,6 @@ app.get('/mp-callback', async (req, res) => {
         clientReq.write(data);
         clientReq.end();
     });
-    // FIM DA SOLUÇÃO HTTP DIRETA
 
     const accessToken = tokenResponse.access_token;
     const refreshToken = tokenResponse.refresh_token;
@@ -185,13 +183,10 @@ app.get('/mp-callback', async (req, res) => {
   }
 });
 
-// server.js (ROTA 3: Criar Pagamento com Split - VALOR MÍNIMO)
-
+// ROTA 3: Criar Pagamento com Split (PRODUÇÃO)
 app.post('/create_preference', async (req, res) => {
   try {
-    // Valor total de teste (R$ 2,00)
     const itemPrice = 2.00;
-    
     const { productId } = req.body; 
     
     // 1. BUSCA O TOKEN AUTOMATICAMENTE NO MYSQL
@@ -201,12 +196,9 @@ app.post('/create_preference', async (req, res) => {
       return res.status(404).json({ error: 'Vendedor ou Token de Produção não encontrado no DB. Execute o OAuth.' });
     }
 
-    // 2. 🛑 NOVA Lógica do Split: R$ 0,01 para o Marketplace (0.5%)
-    // O valor de R$ 1,00 falhou. Usamos R$ 0,01 para forçar a aceitação do split.
+    // 2. Lógica do Split: R$ 0,01 para o Marketplace (0.5%)
     const TAXA_FIXA_MARKETPLACE = 0.01; 
-    
-    // Cálculo do percentual: (0.01 / 2.00) * 100 = 0.5%
-    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100;
+    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100; // Resulta em 0.5%
 
     // 3. Configura o cliente com o TOKEN DE PRODUÇÃO DO VENDEDOR
     const sellerClient = new MercadoPagoConfig({ accessToken: sellerToken });
@@ -222,8 +214,13 @@ app.post('/create_preference', async (req, res) => {
           quantity: 1,
         }
       ],
-      // Parâmetro essencial para o Split: 0.5%
+      // Parâmetro essencial para o Split
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
+      
+      // 🛑 CONFIGURAÇÃO PARA FORÇAR PAGAMENTO À VISTA (PIX)
+      payment_methods: {
+          installments: 1, // Força 1 parcela, priorizando Pix/Débito
+      },
       
       back_urls: {
         success: `${process.env.BACKEND_URL}/success`,
