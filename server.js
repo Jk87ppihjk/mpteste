@@ -28,8 +28,6 @@ const pool = mysql.createPool({
 });
 
 // --- FUNÇÕES DE INTERAÇÃO COM O BANCO DE DADOS ---
-
-/** Busca o Access Token do vendedor no MySQL. */
 async function getSellerTokenByProductId(productId) {
     const query = `
         SELECT t1.mp_access_token 
@@ -41,20 +39,15 @@ async function getSellerTokenByProductId(productId) {
     try {
         const [rows] = await pool.execute(query, [productId]);
         if (rows.length === 0) return null;
-        
         const sellerToken = rows[0].mp_access_token;
         if (!sellerToken) return null;
-        
-        console.log(`[DB] Token de Vendedor encontrado. Prefixo: ${sellerToken.substring(0, 8)}...`);
         return sellerToken;
-
     } catch (error) {
         console.error(`[DB ERRO] Falha ao buscar token:`, error);
         return null;
     }
 }
 
-/** Salva ou atualiza os tokens de acesso e refresh do vendedor. */
 async function saveSellerToken(sellerId, accessToken, refreshToken) {
     const query = `
         INSERT INTO vendedores (seller_id, mp_access_token, mp_refresh_token, data_conexao)
@@ -65,7 +58,6 @@ async function saveSellerToken(sellerId, accessToken, refreshToken) {
         data_conexao = VALUES(data_conexao);
     `;
     await pool.execute(query, [sellerId, accessToken, refreshToken]);
-    console.log(`[DB] Tokens salvos/atualizados para o vendedor ID: ${sellerId}`);
 }
 
 // --- CONFIGURAÇÕES DE CLIENTES MERCADO PAGO ---
@@ -78,54 +70,38 @@ const paymentClient = new Payment(marketplaceClient);
 const redirectUri = `${process.env.BACKEND_URL}/mp-callback`;
 
 // -----------------------------------------------------------------
-// ROTAS DE OAUTH
+// ROTAS DE OAUTH (Mantidas)
 // -----------------------------------------------------------------
 
-// ROTA 1: Iniciar Conexão (OAuth)
 app.get('/conectar-vendedor', async (req, res) => {
   try {
     const internalSellerId = req.query.seller_id || 'vendedor_teste_001'; 
-    
-    // Construção manual da URL de Autorização 
     const authUrl = 'https://auth.mercadopago.com/authorization?' +
         `client_id=${process.env.MP_MARKETPLACE_APP_ID}` +
         `&response_type=code` +
         `&platform_id=mp` +
         `&state=${internalSellerId}` +
         `&redirect_uri=${redirectUri}`;
-    
     res.redirect(authUrl); 
-    
   } catch (error) {
     console.error('Erro ao gerar URL de autorização:', error); 
     res.status(500).send('Erro ao conectar com Mercado Pago.');
   }
 });
 
-// ROTA 2: Callback e Troca de Token (OAuth)
 app.get('/mp-callback', async (req, res) => {
   try {
     const { code, state: sellerId } = req.query; 
+    if (!code) return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
 
-    if (!code) {
-      return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
-    }
-
-    // CHAMADA HTTP DIRETA PARA O MERCADO PAGO para trocar o código pelo token
     const tokenResponse = await new Promise((resolve, reject) => {
         const data = JSON.stringify({
-            client_id: process.env.MP_MARKETPLACE_APP_ID,
-            client_secret: process.env.MP_MARKETPLACE_SECRET_KEY,
-            code: code,
-            redirect_uri: redirectUri,
-            grant_type: 'authorization_code'
+            client_id: process.env.MP_MARKETPLACE_APP_ID, client_secret: process.env.MP_MARKETPLACE_SECRET_KEY,
+            code: code, redirect_uri: redirectUri, grant_type: 'authorization_code'
         });
-
-        const reqOptions = {
-            hostname: 'api.mercadopago.com', path: '/oauth/token', method: 'POST',
+        const reqOptions = { hostname: 'api.mercadopago.com', path: '/oauth/token', method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
         };
-
         const clientReq = https.request(reqOptions, (clientRes) => {
             let responseData = ''; clientRes.on('data', (chunk) => { responseData += chunk; });
             clientRes.on('end', () => {
@@ -136,7 +112,6 @@ app.get('/mp-callback', async (req, res) => {
                 } catch (e) { reject(new Error('Erro ao analisar resposta JSON do MP.')); }
             });
         });
-
         clientReq.on('error', (e) => { reject(e); });
         clientReq.write(data); clientReq.end();
     });
@@ -146,7 +121,6 @@ app.get('/mp-callback', async (req, res) => {
 
     if (sellerId && accessToken) { await saveSellerToken(sellerId, accessToken, refreshToken); } 
     
-    console.log(`✅ CREDENCIAIS SALVAS NO DB para vendedor: ${sellerId}`);
     res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=sucesso`);
 
   } catch (error) {
@@ -156,12 +130,11 @@ app.get('/mp-callback', async (req, res) => {
 });
 
 // -----------------------------------------------------------------
-// ROTA 3: Criar Pagamento com Split (PRODUÇÃO)
+// ROTA 3: Criar Pagamento com Split (PIX ÚNICO)
 // -----------------------------------------------------------------
 app.post('/create_preference', async (req, res) => {
   try {
     const itemPrice = 2.00;
-    // 🛑 ATUALIZADO: Extraindo o payerEmail do corpo da requisição
     const { productId, payerEmail } = req.body; 
     
     // 1. BUSCA O TOKEN AUTOMATICAMENTE NO MYSQL
@@ -189,18 +162,19 @@ app.post('/create_preference', async (req, res) => {
           quantity: 1,
         }
       ],
-      // 🛑 NOVO: Objeto Payer (com o email)
       payer: {
           email: payerEmail || 'default_buyer@mp-test.com'
       },
-      
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
-      // CONFIGURAÇÃO PARA FORÇAR PIX/CARTÃO DE CRÉDITO
+      // 🛑 NOVO: EXCLUSÃO AGRESSIVA PARA FORÇAR PIX (ÚNICO MÉTODO)
       payment_methods: {
           installments: 1, 
           excluded_payment_types: [
-              { id: "ticket" }, { id: "atm" }, { id: "debit_card" }, { id: "bank_transfer" }
+              { id: "credit_card" },  // Exclui Cartão de Crédito
+              { id: "debit_card" },   // Exclui Cartão de Débito
+              { id: "ticket" },       // Exclui Boleto
+              { id: "atm" }           // Exclui Transferência (Geral)
           ],
       },
       
@@ -227,17 +201,13 @@ app.post('/webhook-mp', async (req, res) => {
     const topic = req.query.topic || req.body.topic;
     const notificationId = req.query.id || req.body.data?.id;
 
-    if (topic !== 'payment' || !notificationId) {
-        return res.status(200).send('Notificação ignorada.'); 
-    }
+    if (topic !== 'payment' || !notificationId) return res.status(200).send('Notificação ignorada.'); 
 
     try {
-        // Consulta à API (Verificação Antifraude)
         const paymentInfo = await paymentClient.get({ id: notificationId });
 
         console.log(`--- WEBHOOK RECEBIDO --- Status: ${paymentInfo.status}, ID: ${notificationId}`);
         
-        // LÓGICA DE NEGÓCIO:
         if (paymentInfo.status === 'approved') {
             console.log('--- PAGAMENTO APROVADO! --- (Valor dividido: R$ 0.01 para Marketplace)');
         } 
@@ -247,7 +217,6 @@ app.post('/webhook-mp', async (req, res) => {
         return res.status(500).send('Erro no servidor ao processar notificação.'); 
     }
 
-    // Reconhecimento: Retorna 200 OK (Obrigatório)
     res.status(200).send('Webhook processado.');
 });
 
