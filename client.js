@@ -2,7 +2,7 @@
 
 document.getElementById('comprar-btn').addEventListener('click', () => {
   // ⚠️ SUBSTITUA PELA URL DO SEU RENDER.COM
-  const BACKEND_URL = 'https://seu-app-no-render.onrender.com'; 
+  const BACKEND_URL = 'https://mpteste.onrender.com'; 
   
   fetch(`${BACKEND_URL}/create_preference`, {
     method: 'POST',
