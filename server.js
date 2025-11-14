@@ -185,10 +185,13 @@ app.get('/mp-callback', async (req, res) => {
   }
 });
 
-// ROTA 3: Criar Pagamento com Split (PRODUÇÃO)
+// server.js (ROTA 3: Criar Pagamento com Split - VALOR MÍNIMO)
+
 app.post('/create_preference', async (req, res) => {
   try {
+    // Valor total de teste (R$ 2,00)
     const itemPrice = 2.00;
+    
     const { productId } = req.body; 
     
     // 1. BUSCA O TOKEN AUTOMATICAMENTE NO MYSQL
@@ -198,8 +201,11 @@ app.post('/create_preference', async (req, res) => {
       return res.status(404).json({ error: 'Vendedor ou Token de Produção não encontrado no DB. Execute o OAuth.' });
     }
 
-    // 2. Lógica do Split: R$ 1,00 para o Marketplace (50%)
-    const TAXA_FIXA_MARKETPLACE = 1.00;
+    // 2. 🛑 NOVA Lógica do Split: R$ 0,01 para o Marketplace (0.5%)
+    // O valor de R$ 1,00 falhou. Usamos R$ 0,01 para forçar a aceitação do split.
+    const TAXA_FIXA_MARKETPLACE = 0.01; 
+    
+    // Cálculo do percentual: (0.01 / 2.00) * 100 = 0.5%
     const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100;
 
     // 3. Configura o cliente com o TOKEN DE PRODUÇÃO DO VENDEDOR
@@ -216,7 +222,7 @@ app.post('/create_preference', async (req, res) => {
           quantity: 1,
         }
       ],
-      // Parâmetro essencial para o Split: 50%
+      // Parâmetro essencial para o Split: 0.5%
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
       back_urls: {
