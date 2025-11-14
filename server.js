@@ -45,7 +45,6 @@ async function getSellerTokenByProductId(productId) {
         const sellerToken = rows[0].mp_access_token;
         if (!sellerToken) return null;
         
-        // Mantido o console.log para debugging
         console.log(`[DB] Token de Vendedor encontrado. Prefixo: ${sellerToken.substring(0, 8)}...`);
         return sellerToken;
 
@@ -162,7 +161,8 @@ app.get('/mp-callback', async (req, res) => {
 app.post('/create_preference', async (req, res) => {
   try {
     const itemPrice = 2.00;
-    const { productId } = req.body; 
+    // 🛑 ATUALIZADO: Extraindo o payerEmail do corpo da requisição
+    const { productId, payerEmail } = req.body; 
     
     // 1. BUSCA O TOKEN AUTOMATICAMENTE NO MYSQL
     const sellerToken = await getSellerTokenByProductId(productId || 'produto-split-real'); 
@@ -173,7 +173,7 @@ app.post('/create_preference', async (req, res) => {
 
     // 2. Lógica do Split: R$ 0,01 para o Marketplace (0.5%)
     const TAXA_FIXA_MARKETPLACE = 0.01; 
-    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100; // Resulta em 0.5%
+    const marketplace_fee_percentage = (TAXA_FIXA_MARKETPLACE / itemPrice) * 100;
 
     // 3. Configura o cliente com o TOKEN DO VENDEDOR
     const sellerClient = new MercadoPagoConfig({ accessToken: sellerToken });
@@ -189,7 +189,11 @@ app.post('/create_preference', async (req, res) => {
           quantity: 1,
         }
       ],
-      // Parâmetro essencial para o Split
+      // 🛑 NOVO: Objeto Payer (com o email)
+      payer: {
+          email: payerEmail || 'default_buyer@mp-test.com'
+      },
+      
       marketplace_fee: parseFloat(marketplace_fee_percentage.toFixed(2)), 
       
       // CONFIGURAÇÃO PARA FORÇAR PIX/CARTÃO DE CRÉDITO
@@ -235,7 +239,6 @@ app.post('/webhook-mp', async (req, res) => {
         
         // LÓGICA DE NEGÓCIO:
         if (paymentInfo.status === 'approved') {
-            // Lógica para marcar o pedido como pago e iniciar o envio.
             console.log('--- PAGAMENTO APROVADO! --- (Valor dividido: R$ 0.01 para Marketplace)');
         } 
 
