@@ -1,11 +1,11 @@
-// server.js (Lógica consolidada de servidor, banco de dados e Mercado Pago)
+// server.js (Código de Produção Final e Consolidado)
 
 require('dotenv').config();
 const express = require('express');
 const { MercadoPagoConfig, Preference } = require('mercadopago');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
-const https = require('https'); // Necessário para a troca direta de token OAuth
+const https = require('https'); 
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -23,7 +23,7 @@ const pool = mysql.createPool({
 
 // --- FUNÇÕES DE INTERAÇÃO COM O BANCO DE DADOS ---
 
-/** Busca o Access Token de PRODUÇÃO do vendedor no MySQL. */
+/** Busca o Access Token do vendedor no MySQL. */
 async function getSellerTokenByProductId(productId) {
     const query = `
         SELECT t1.mp_access_token 
@@ -34,10 +34,23 @@ async function getSellerTokenByProductId(productId) {
     `;
     try {
         const [rows] = await pool.execute(query, [productId]);
-        if (rows.length === 0 || !rows[0].mp_access_token.startsWith('PROD')) {
+        if (rows.length === 0) {
+            console.warn(`[DB] Produto/Vendedor não encontrado ou desvinculado para ID: ${productId}`);
             return null;
         }
-        return rows[0].mp_access_token;
+        
+        const sellerToken = rows[0].mp_access_token;
+        
+        // 🛑 CORREÇÃO APLICADA AQUI: Remove a verificação do prefixo 'PROD-'
+        // O token é retornado, mesmo que comece com APP_USR-.
+        if (!sellerToken) {
+            console.error(`[DB] Token encontrado é nulo.`);
+            return null;
+        }
+
+        console.log(`[DB] Token de Vendedor encontrado. Prefixo: ${sellerToken.substring(0, 8)}...`);
+        return sellerToken;
+
     } catch (error) {
         console.error(`[DB ERRO] Falha ao buscar token:`, error);
         return null;
@@ -64,7 +77,6 @@ app.use(express.json());
 app.use(cors());
 app.use(express.static('public'));
 
-// Note: A classe OAuth do SDK não é usada mais, mas mantemos o client para Preference
 const marketplaceClient = new MercadoPagoConfig({
   accessToken: process.env.MP_MARKETPLACE_SECRET_KEY,
   options: {
@@ -83,7 +95,7 @@ app.get('/conectar-vendedor', async (req, res) => {
   try {
     const internalSellerId = req.query.seller_id || 'vendedor_teste_001'; 
     
-    // SOLUÇÃO: Construção manual da URL de Autorização 
+    // Construção manual da URL de Autorização 
     const authUrl = 'https://auth.mercadopago.com/authorization?' +
         `client_id=${process.env.MP_MARKETPLACE_APP_ID}` +
         `&response_type=code` +
@@ -109,7 +121,7 @@ app.get('/mp-callback', async (req, res) => {
       return res.redirect(`${process.env.BACKEND_URL}/painel-vendedor?status=cancelado`);
     }
 
-    // 🛑 SOLUÇÃO: CHAMADA HTTP DIRETA PARA O MERCADO PAGO para trocar o código pelo token
+    // CHAMADA HTTP DIRETA PARA O MERCADO PAGO para trocar o código pelo token
     const tokenResponse = await new Promise((resolve, reject) => {
         const data = JSON.stringify({
             client_id: process.env.MP_MARKETPLACE_APP_ID,
@@ -154,7 +166,7 @@ app.get('/mp-callback', async (req, res) => {
         clientReq.write(data);
         clientReq.end();
     });
-    // 🛑 FIM DA SOLUÇÃO HTTP DIRETA
+    // FIM DA SOLUÇÃO HTTP DIRETA
 
     const accessToken = tokenResponse.access_token;
     const refreshToken = tokenResponse.refresh_token;
