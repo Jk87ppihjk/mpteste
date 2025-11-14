@@ -135,5 +135,5 @@ app.get('/failure', (req, res) => res.send('Pagamento Falhou (Simulação de Ret
 app.get('/painel-vendedor', (req, res) => res.send(`Conexão OAuth: ${req.query.status}`));
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor rodando em http://localhost:${port}`);
+  console.log(`🚀 Servidor rodando em https://mpteste.onrender.com:${port}`);
 });
