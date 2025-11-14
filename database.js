@@ -1,9 +1,9 @@
-// database.js (Conexão MySQL Real)
+// database.js (Conexão e Funções de DB)
 
 require('dotenv').config();
 const mysql = require('mysql2/promise');
 
-// Cria o pool de conexões (melhor performance para um servidor web)
+// ⚠️ SUBSTITUA OS VALORES NA CONEXÃO PELOS DO SEU .env
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -14,23 +14,23 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
+// --- FUNÇÃO DE BUSCA (USADA EM /create_preference) ---
+
 /**
- * Função REAL que busca o Access Token de PRODUÇÃO do vendedor no MySQL.
- * * @param {string} productId - O ID do produto que está sendo comprado.
+ * Busca o Access Token de PRODUÇÃO do vendedor no MySQL.
+ * @param {string} productId - O ID do produto que está sendo comprado.
  * @returns {Promise<string|null>} O token de acesso de produção do vendedor.
  */
 async function getSellerTokenByProductId(productId) {
-    // Consulta SQL: Busca o token do vendedor que vende o produto específico.
-    // ⚠️ ATENÇÃO: A tabela e as colunas devem refletir seu schema real.
     const query = `
-        SELECT mp_access_token 
-        FROM vendedores 
-        WHERE produto_id = ?
+        SELECT t1.mp_access_token 
+        FROM vendedores t1
+        JOIN produtos t2 ON t1.seller_id = t2.seller_id
+        WHERE t2.produto_id = ?
         LIMIT 1
     `;
 
     try {
-        // Executa a query com o ID do produto como parâmetro seguro
         const [rows] = await pool.execute(query, [productId]);
 
         if (rows.length === 0) {
@@ -38,15 +38,14 @@ async function getSellerTokenByProductId(productId) {
             return null;
         }
 
-        // Retorna o token da primeira linha encontrada
         const sellerToken = rows[0].mp_access_token;
 
         if (!sellerToken || !sellerToken.startsWith('PROD')) {
-             console.error(`[DB] Token encontrado para ${productId} é inválido ou não é de PRODUÇÃO.`);
+             console.error(`[DB] Token inválido ou não é de PRODUÇÃO para ${productId}.`);
              return null;
         }
 
-        console.log(`[DB] Token de Vendedor de PRODUÇÃO encontrado e retornado com sucesso.`);
+        console.log(`[DB] Token de Vendedor de PRODUÇÃO encontrado.`);
         return sellerToken;
 
     } catch (error) {
@@ -55,18 +54,24 @@ async function getSellerTokenByProductId(productId) {
     }
 }
 
-// Implemente a função para salvar o token aqui (usada no /mp-callback)
+// --- FUNÇÃO DE SALVAMENTO (USADA EM /mp-callback) ---
+
+/**
+ * Salva ou atualiza os tokens de acesso e refresh do vendedor.
+ */
 async function saveSellerToken(sellerId, accessToken, refreshToken) {
+    // ⚠️ Certifique-se de que sua tabela 'vendedores' tem uma chave única em 'seller_id'
     const query = `
         INSERT INTO vendedores (seller_id, mp_access_token, mp_refresh_token, data_conexao)
         VALUES (?, ?, ?, NOW())
         ON DUPLICATE KEY UPDATE 
         mp_access_token = VALUES(mp_access_token), 
-        mp_refresh_token = VALUES(mp_refresh_token);
+        mp_refresh_token = VALUES(mp_refresh_token),
+        data_conexao = VALUES(data_conexao);
     `;
-    // Assumindo que você tem 'seller_id' na sua rota /mp-callback via 'state'
+    
+    // ATENÇÃO: O 'sellerId' deve vir do 'state' da ROTA 1
     await pool.execute(query, [sellerId, accessToken, refreshToken]);
-    console.log(`[DB] Tokens salvos/atualizados para o vendedor ID: ${sellerId}`);
 }
 
 
