@@ -1,4 +1,4 @@
-// database.js (Conexão e Funções de DB)
+// ! Arquivo: database.js (COMPLETO E CORRIGIDO PARA SINCRONIZAÇÃO)
 
 require('dotenv').config();
 const mysql = require('mysql2/promise');
@@ -54,13 +54,12 @@ async function getSellerTokenByProductId(productId) {
     }
 }
 
-// --- FUNÇÃO DE SALVAMENTO (USADA EM /mp-callback) ---
+// --- FUNÇÃO DE SALVAMENTO (USADA EM /mp-callback - OAuth) ---
 
 /**
  * Salva ou atualiza os tokens de acesso e refresh do vendedor.
  */
 async function saveSellerToken(sellerId, accessToken, refreshToken) {
-    // ⚠️ Certifique-se de que sua tabela 'vendedores' tem uma chave única em 'seller_id'
     const query = `
         INSERT INTO vendedores (seller_id, mp_access_token, mp_refresh_token, data_conexao)
         VALUES (?, ?, ?, NOW())
@@ -70,9 +69,40 @@ async function saveSellerToken(sellerId, accessToken, refreshToken) {
         data_conexao = VALUES(data_conexao);
     `;
     
-    // ATENÇÃO: O 'sellerId' deve vir do 'state' da ROTA 1
     await pool.execute(query, [sellerId, accessToken, refreshToken]);
 }
 
 
-module.exports = { getSellerTokenByProductId, saveSellerToken };
+// --- NOVAS FUNÇÕES DE SINCRONIZAÇÃO (ADICIONADAS) ---
+
+/**
+ * Salva ou atualiza o mapeamento Produto ID -> Seller ID.
+ * Esta função é chamada pela rota de sincronização.
+ */
+async function syncProductMapping(productId, sellerId) {
+    const query = `
+        INSERT INTO produtos (produto_id, seller_id)
+        VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE seller_id = VALUES(seller_id);
+    `;
+    return pool.execute(query, [productId, sellerId]);
+}
+
+/**
+ * Garante que o vendedor existe na tabela 'vendedores' para o OAuth.
+ */
+async function createSellerIfNotExists(sellerId) {
+    const query = `
+        INSERT IGNORE INTO vendedores (seller_id)
+        VALUES (?)
+    `;
+    return pool.execute(query, [sellerId]);
+}
+
+
+module.exports = { 
+    getSellerTokenByProductId, 
+    saveSellerToken,
+    syncProductMapping,     
+    createSellerIfNotExists
+};
