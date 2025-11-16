@@ -1,4 +1,4 @@
-// ! Arquivo: database.js (COMPLETO E CORRIGIDO: Removida a checagem estrita de 'PROD-')
+// ! Arquivo: database.js (COMPLETO E CORRIGIDO: Removida TODA checagem de prefixo no token)
 
 require('dotenv').config();
 const mysql = require('mysql2/promise');
@@ -32,27 +32,20 @@ async function getSellerTokenByProductId(productId) {
         const [rows] = await pool.execute(query, [productId]);
 
         if (rows.length === 0) {
-            console.warn(`[DB] Produto/Vendedor não encontrado para ID: ${productId}`);
+            console.warn(`[DB] Produto/Vendedor não encontrado (sem mapeamento) para ID: ${productId}`);
             return null;
         }
 
         const sellerToken = rows[0].mp_access_token;
 
-        // **CORREÇÃO CRÍTICA:** Removendo a checagem estrita por 'PROD-'.
-        // Agora, qualquer token não-nulo será retornado.
-        if (!sellerToken) {
-             console.error(`[DB] Token nulo para ${productId}.`);
+        // **CORREÇÃO FINAL:** Retorna o token se ele existir, sem verificar o prefixo.
+        if (!sellerToken) { 
+             console.error(`[DB] Token nulo para o Vendedor/Produto ID ${productId}.`);
              return null;
         }
-
-        // Manter aviso caso o token não seja o esperado (APP ou PROD)
-        if (!sellerToken.startsWith('PROD') && !sellerToken.startsWith('APP_')) {
-             console.warn(`[DB] ATENÇÃO: Token com prefixo não padrão (${sellerToken.substring(0, 8)}...). Prosseguindo com o token.`);
-        } else {
-             console.log(`[DB] Token de Vendedor encontrado. Prefix: ${sellerToken.substring(0, 4)}`);
-        }
         
-        return sellerToken; // Retorna o token para o Mercado Pago SDK tentar usar
+        console.log(`[DB] Token de Vendedor encontrado. Prosseguindo para API MP.`);
+        return sellerToken; // Retorna o token APP_USR-...
 
     } catch (error) {
         console.error(`[DB ERRO] Falha ao consultar o banco de dados:`, error);
@@ -79,7 +72,7 @@ async function saveSellerToken(sellerId, accessToken, refreshToken) {
 }
 
 
-// --- FUNÇÕES DE SINCRONIZAÇÃO (ADICIONADAS ANTERIORMENTE) ---
+// --- FUNÇÕES DE SINCRONIZAÇÃO ---
 
 /**
  * Salva ou atualiza o mapeamento Produto ID -> Seller ID.
