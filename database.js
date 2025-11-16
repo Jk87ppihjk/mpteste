@@ -1,9 +1,9 @@
-// ! Arquivo: database.js (COMPLETO E CORRIGIDO PARA SINCRONIZAÇÃO)
+// ! Arquivo: database.js (COMPLETO E CORRIGIDO: Removida a checagem estrita de 'PROD-')
 
 require('dotenv').config();
 const mysql = require('mysql2/promise');
 
-// ⚠️ SUBSTITUA OS VALORES NA CONEXÃO PELOS DO SEU .env
+// ⚠️ Configuração do Pool de Conexão
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -17,9 +17,7 @@ const pool = mysql.createPool({
 // --- FUNÇÃO DE BUSCA (USADA EM /create_preference) ---
 
 /**
- * Busca o Access Token de PRODUÇÃO do vendedor no MySQL.
- * @param {string} productId - O ID do produto que está sendo comprado.
- * @returns {Promise<string|null>} O token de acesso de produção do vendedor.
+ * Busca o Access Token do vendedor no MySQL.
  */
 async function getSellerTokenByProductId(productId) {
     const query = `
@@ -40,13 +38,21 @@ async function getSellerTokenByProductId(productId) {
 
         const sellerToken = rows[0].mp_access_token;
 
-        if (!sellerToken || !sellerToken.startsWith('PROD')) {
-             console.error(`[DB] Token inválido ou não é de PRODUÇÃO para ${productId}.`);
+        // **CORREÇÃO CRÍTICA:** Removendo a checagem estrita por 'PROD-'.
+        // Agora, qualquer token não-nulo será retornado.
+        if (!sellerToken) {
+             console.error(`[DB] Token nulo para ${productId}.`);
              return null;
         }
 
-        console.log(`[DB] Token de Vendedor de PRODUÇÃO encontrado.`);
-        return sellerToken;
+        // Manter aviso caso o token não seja o esperado (APP ou PROD)
+        if (!sellerToken.startsWith('PROD') && !sellerToken.startsWith('APP_')) {
+             console.warn(`[DB] ATENÇÃO: Token com prefixo não padrão (${sellerToken.substring(0, 8)}...). Prosseguindo com o token.`);
+        } else {
+             console.log(`[DB] Token de Vendedor encontrado. Prefix: ${sellerToken.substring(0, 4)}`);
+        }
+        
+        return sellerToken; // Retorna o token para o Mercado Pago SDK tentar usar
 
     } catch (error) {
         console.error(`[DB ERRO] Falha ao consultar o banco de dados:`, error);
@@ -73,11 +79,10 @@ async function saveSellerToken(sellerId, accessToken, refreshToken) {
 }
 
 
-// --- NOVAS FUNÇÕES DE SINCRONIZAÇÃO (ADICIONADAS) ---
+// --- FUNÇÕES DE SINCRONIZAÇÃO (ADICIONADAS ANTERIORMENTE) ---
 
 /**
  * Salva ou atualiza o mapeamento Produto ID -> Seller ID.
- * Esta função é chamada pela rota de sincronização.
  */
 async function syncProductMapping(productId, sellerId) {
     const query = `
